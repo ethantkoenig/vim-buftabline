@@ -22,8 +22,8 @@
 " THE SOFTWARE.
 " }}}
 
-if v:version < 700
-  echoerr printf('Vim 7 is required for buftabline (this is only %d.%d)',v:version/100,v:version%100)
+if v:version < 703
+  echoerr printf('Vim 7.03 is required for buftabline (this is only %d.%d)',v:version/100,v:version%100)
   finish
 endif
 
@@ -37,14 +37,27 @@ hi default link BufTabLineActive  PmenuSel
 hi default link BufTabLineHidden  TabLine
 hi default link BufTabLineFill    TabLineFill
 
+set showtabline=2
+
 let g:buftabline_numbers    = get(g:, 'buftabline_numbers',    0)
 let g:buftabline_indicators = get(g:, 'buftabline_indicators', 0)
 let g:buftabline_separators = get(g:, 'buftabline_separators', 0)
-let g:buftabline_show       = get(g:, 'buftabline_show',       2)
-let g:buftabline_plug_max   = get(g:, 'buftabline_plug_max',  10)
 
-function! buftabline#user_buffers() " help buffers are always unlisted, but quickfix buffers are not
-  return filter(range(1,bufnr('$')),'buflisted(v:val) && "quickfix" !=? getbufvar(v:val, "&buftype")')
+let s:user_buffers = []
+function! buftabline#update_user_buffers() " help buffers are always unlisted, but quickfix buffers are not
+  for b in range(1,bufnr('$'))
+    let i = index(s:user_buffers, b)
+    if !buflisted(b) || getbufvar(b, "&buftype") == "quickfix"
+    " remove from list
+    if i == 0
+      let s:user_buffers = s:user_buffers[1:]
+    elseif i > 0
+      let s:user_buffers = s:user_buffers[:i-1]+s:user_buffers[i+1:]
+    endif
+    elseif i < 0
+    let s:user_buffers = s:user_buffers + [b]
+    endif
+  endfor
 endfunction
 
 let s:dirsep = fnamemodify(getcwd(),':p')[-1:]
@@ -53,9 +66,9 @@ function! buftabline#render()
   let show_num = g:buftabline_numbers == 1
   let show_ord = g:buftabline_numbers == 2
   let show_mod = g:buftabline_indicators
-  let lpad     = g:buftabline_separators ? nr2char(0x23B8) : ' '
+  let lpad   = g:buftabline_separators ? nr2char(0x23B8) : ' '
 
-  let bufnums = buftabline#user_buffers()
+  call buftabline#update_user_buffers()
   let centerbuf = s:centerbuf " prevent tabline jumping around when non-user buffer current (e.g. help)
 
   " pick up data on all the buffers
@@ -64,7 +77,7 @@ function! buftabline#render()
   let tabs_per_tail = {}
   let currentbuf = winbufnr(0)
   let screen_num = 0
-  for bufnum in bufnums
+  for bufnum in s:user_buffers
     let screen_num = show_num ? bufnum : show_ord ? screen_num + 1 : ''
     let tab = { 'num': bufnum }
     let tab.hilite = currentbuf == bufnum ? 'Current' : bufwinnr(bufnum) > 0 ? 'Active' : 'Hidden'
@@ -152,19 +165,8 @@ function! buftabline#render()
 endfunction
 
 function! buftabline#update(zombie)
-  set tabline=
-  if tabpagenr('$') > 1 | set guioptions+=e showtabline=2 | return | endif
+  if tabpagenr('$') > 1 | set guioptions+=e tabline= | return | endif
   set guioptions-=e
-  if 0 == g:buftabline_show
-    set showtabline=1
-    return
-  elseif 1 == g:buftabline_show
-    " account for BufDelete triggering before buffer is actually deleted
-    let bufnums = filter(buftabline#user_buffers(), 'v:val != a:zombie')
-    let &g:showtabline = 1 + ( len(bufnums) > 1 )
-  elseif 2 == g:buftabline_show
-    set showtabline=2
-  endif
   set tabline=%!buftabline#render()
 endfunction
 
@@ -173,22 +175,41 @@ autocmd TabEnter  * call buftabline#update(0)
 autocmd BufAdd    * call buftabline#update(0)
 autocmd BufDelete * call buftabline#update(str2nr(expand('<abuf>')))
 
-for s:n in range(1, g:buftabline_plug_max)
-    execute printf("noremap <silent> <Plug>BufTabLine.Go(%d) :exe 'b'.get(buftabline#user_buffers(),%d,'')<cr>", s:n, s:n - 1)
-endfor
-unlet s:n
+function! buftabline#next()
+  let i = index(s:user_buffers, winbufnr(0))
+  if i >= 0 && i < len(s:user_buffers) - 1
+    execute printf("b %d", s:user_buffers[i+1])
+  endif
+endfunction
 
-if v:version < 703
-  function s:transpile()
-    let [ savelist, &list ] = [ &list, 0 ]
-    redir => src
-      silent function buftabline#render
-    redir END
-    let &list = savelist
-    let src = substitute(src, '\n\zs[0-9 ]*', '', 'g')
-    let src = substitute(src, 'strwidth(strtrans(\([^)]\+\)))', 'strlen(substitute(\1, ''\p\|\(.\)'', ''x\1'', ''g''))', 'g')
-    return src
-  endfunction
-  exe "delfunction buftabline#render\n" . s:transpile()
-  delfunction s:transpile
-endif
+function! buftabline#prev()
+  let i = index(s:user_buffers, winbufnr(0))
+  if i > 0
+    execute printf("b %d", s:user_buffers[i-1])
+  endif
+endfunction
+
+function! buftabline#move_left()
+  let i = index(s:user_buffers, winbufnr(0))
+  if i == 1
+    let s:user_buffers = [s:user_buffers[1], s:user_buffers[0]] + s:user_buffers[2:]
+  elseif i > 1
+    let s:user_buffers = s:user_buffers[:i-2] + [s:user_buffers[i], s:user_buffers[i-1]] + s:user_buffers[i+1:]
+  endif
+  set tabline=%!buftabline#render()
+endfunction
+
+function! buftabline#move_right()
+    let i = index(s:user_buffers, winbufnr(0))
+    if i == 0
+      let s:user_buffers = [s:user_buffers[1], s:user_buffers[0]] + s:user_buffers[2:]
+    elseif i > 0 && i < len(s:user_buffers) - 1
+      let s:user_buffers = s:user_buffers[:i-1] + [s:user_buffers[i+1], s:user_buffers[i]] + s:user_buffers[i+2:]
+    endif
+  set tabline=%!buftabline#render()
+endfunction
+
+command! BufTabLineNext call buftabline#next()
+command! BufTabLinePrev call buftabline#prev()
+command! BufTabLineRight call buftabline#move_right()
+command! BufTabLineLeft call buftabline#move_left()
