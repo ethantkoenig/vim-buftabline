@@ -189,6 +189,20 @@ function! buftabline#prev()
   endif
 endfunction
 
+function! buftabline#close()
+  let currentbuf = winbufnr(0)
+  let i = index(s:user_buffers, currentbuf)
+  if i < 0 || (i == 0 && len(s:user_buffers) == 1)
+    bd
+  elseif i < len(s:user_buffers) - 1
+    execute printf("b %d", s:user_buffers[i+1])
+    execute printf("bd %d", currentbuf)
+  else
+    execute printf("b %d", s:user_buffers[i-1])
+    execute printf("bd %d", currentbuf)
+  endif
+endfunction
+
 function! buftabline#move_left()
   let i = index(s:user_buffers, winbufnr(0))
   if i == 1
@@ -211,5 +225,6 @@ endfunction
 
 command! BufTabLineNext call buftabline#next()
 command! BufTabLinePrev call buftabline#prev()
+command! BufTabLineClose call buftabline#close()
 command! BufTabLineRight call buftabline#move_right()
 command! BufTabLineLeft call buftabline#move_left()
